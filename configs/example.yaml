@@ -1,0 +1,17 @@
+_base_: base.yaml
+
+experiment:
+  name: qwen06b_curriculum
+
+model:
+  name: "Qwen/Qwen3-0.6B"
+
+training:
+  effective_batch_size: 768
+  per_device_batch_size: 96
+  max_steps: 100000000
+
+curriculum:
+  base_lookahead: 1
+  max_lookahead: 96
+  lookahead_step: 8

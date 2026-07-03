@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.so
+*.egg-info/
+build/
+dist/
+*.egg
+.eggs/
+slurm-*.out
+results/

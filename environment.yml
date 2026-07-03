@@ -1,0 +1,21 @@
+name: search-ft
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pytorch>=2.8
+  - pytorch-cuda=12.8
+  - pybind11>=2.11
+  - numpy>=2.0
+  - pyyaml>=6.0
+  - pip
+  - pip:
+    - transformers>=4.55
+    - accelerate>=1.10
+    - flash-attn>=2.8
+    - datasets>=3.0
+    - faker>=40.0
+    - liger-kernel>=0.2

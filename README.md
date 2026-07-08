@@ -2,6 +2,15 @@
 
 Curriculum finetuning on synthetic search problems with evaluation on downstream reasoning benchmarks.
 
+```bibtex
+@article{huang2026unlocking,
+  title={Unlocking Long-Horizon Implicit Reasoning in LLMs via Curriculum Learning},
+  author={Huang, Jimson and Nickell, Maxwell and Zhang, Ruowang and Saparov, Abulhair},
+  year={2026},
+  url={https://arxiv.org/abs/XXXX.XXXXX}
+}
+```
+
 ## Setup
 
 ```bash
@@ -41,8 +50,8 @@ python -m search_ft.eval --checkpoint $GSFT_RESULTS_DIR/runs/<name>/checkpoint-N
 python -m search_ft.downstream.runner \
     --checkpoint $GSFT_RESULTS_DIR/runs/<name>/checkpoint-N/ \
     --benchmarks proofwriter folio logiqa ruletaker clutrr stepgame \
-                 prontoqa_ood multilogieval zebra_mc logicbench_bqa \
-                 logicbench_mcqa legal nlgraph_gen proofwriter_cwa \
+                 prontoqa_ood multilogieval zebra_mc logicbench \
+                 nlgraph_gen proofwriter_cwa \
     --n 1000
 ```
 
@@ -71,15 +80,4 @@ $GSFT_RESULTS_DIR/
     └── eval/
         ├── synthetic.json
         └── downstream.json
-```
-
-## Citation
-
-```bibtex
-@article{huang2026unlocking,
-  title={Unlocking Long-Horizon Implicit Reasoning in LLMs via Curriculum Learning},
-  author={Huang, Jimson and Nickell, Maxwell and Zhang, Ruowang and Saparov, Abulhair},
-  year={2026},
-  url={https://arxiv.org/abs/XXXX.XXXXX}
-}
 ```

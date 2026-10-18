@@ -115,3 +115,7 @@ $GSFT_RESULTS_DIR/
         ├── synthetic.json
         └── downstream.json
 ```
+
+## License
+
+Apache License 2.0; see [LICENSE](LICENSE). The graph generator's core library under `search_ft/generator/core/` is Abulhair Saparov's and carries its own Apache-2.0 notice.

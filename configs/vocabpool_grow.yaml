@@ -1,0 +1,33 @@
+_base_: base.yaml
+
+# Entity-vocabulary ablation, arm "grow": the vertex-ID -> name dictionary with the ID range following the
+# stage (2(L+1) names at stage L). Otherwise the paper's s=8 run: Qwen3-0.6B, n = 6 x 128 = 768, 16 stages to
+# L = 128, gate 98% on W = 800, batch 48 x 4 ranks x grad-accum 4 = 768. The budget is the compute the s=8 joint
+# run needed to complete L = 128 (87,483 PFLOPs); training stops there or after the 16th stage.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 128 --samples 500 --vocab_pool grow
+
+experiment:
+  name: qwen06b_vocabpool_grow
+
+model:
+  name: "Qwen/Qwen3-0.6B"
+
+training:
+  effective_batch_size: 768
+  per_device_batch_size: 48
+  save_steps: 250
+  accuracy_window: 800
+  max_total_pflops: 87483
+
+curriculum:
+  base_lookahead: 8
+  max_lookahead: 128
+  lookahead_step: 8
+  min_steps_per_stage: 200
+  check_every: 25
+
+data:
+  vocab_pool: grow
+
+eval:
+  persist_every: 1000

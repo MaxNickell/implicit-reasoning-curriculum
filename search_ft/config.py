@@ -7,6 +7,8 @@ from typing import Any, Optional
 
 import yaml
 
+from .curriculum.lookahead import parse_lookahead_mixture
+
 
 RESULTS_ENV_VAR = "GSFT_RESULTS_DIR"
 RESULTS_DEFAULT = "./results"
@@ -96,10 +98,16 @@ class TrainingConfig:
     # False (the paper's setting): each rank trains its own replica, gradients are never averaged across ranks.
     # True: all-reduce (AVG) every trainable gradient after backward, i.e. standard DistributedDataParallel.
     ddp_grad_average: bool = False
+    # Compute budget in PFLOPs (6N x cumulative tokens, the accounting of curriculum/callback.py). Checked when
+    # the Trainer saves a checkpoint (every save_steps); training stops at the first save where the cumulative
+    # compute has reached it. 0 = no budget. The cumulative token count carries over a resume.
+    max_total_pflops: float = 0.0
 
     def __post_init__(self):
         if self.head not in HEAD_MODES:
             raise ValueError(f"training.head must be one of {HEAD_MODES}, got {self.head!r}")
+        if self.max_total_pflops < 0:
+            raise ValueError(f"training.max_total_pflops must be >= 0, got {self.max_total_pflops}")
 
 
 @dataclass
@@ -110,12 +118,44 @@ class CurriculumConfig:
     accuracy_threshold: float = 0.98
     min_steps_per_stage: int = 200
     check_every: int = 50
+    # Edge-budget multiplier per unit lookahead. 2 (the paper's setting) = one goal path + one equal-length
+    # distractor at max depth; 3/4/5 widen the deepest instances to that many branches and scale the vertex-ID
+    # pool to breadth*L+2. Caps the reachable L at ((n-5)//3-1)//breadth for context size n.
+    breadth: int = 2
+    # Exposure-matched shuffled control: 'L:steps,L:steps,...' (or a list of [L, steps] pairs) taken from a
+    # curriculum run's per-stage step counts. Every search example then draws its lookahead L at random,
+    # weighted by the steps the curriculum spent at L, so the run sees the curriculum's multiset in random
+    # order. Combine with an accuracy_threshold above 1 so the stage never advances. null = off.
+    shuffled_mixture: Any = None
+
+    def __post_init__(self):
+        if self.breadth < 1:
+            raise ValueError(f"curriculum.breadth must be >= 1, got {self.breadth}")
+        parse_lookahead_mixture(self.shuffled_mixture)  # raises on a malformed spec
+
+
+VOCAB_POOLS = ("none", "grow", "fixed")
 
 
 @dataclass
 class DataConfig:
-    fixed_vocab: bool = False
+    # Entity-vocabulary curriculum: map each symbolic vertex ID to one fixed attribute name. grow = the ID
+    # range follows the stage (breadth*L+2 names at stage L, i.e. 2(L+1) at breadth 2; ID 0 is reserved);
+    # fixed = the ID range is pinned at the context maximum ((n-5)//3+1 names) throughout; none = fresh
+    # random names per instance (the paper's main runs).
+    vocab_pool: str = "none"
+    # Context budget of the symbolic generator in generator tokens (n). 0 = 6 x curriculum.max_lookahead,
+    # the paper's setting at breadth 2; a breadth-b run that is to reach L needs (n-5)//3 >= b*L+1.
+    max_input_size: int = 0
     instruction_mix_ratio: float = 0.0
+
+    def __post_init__(self):
+        if self.vocab_pool is None:  # a CLI override `--data.vocab_pool none` arrives as None (_coerce_value)
+            self.vocab_pool = "none"
+        if self.vocab_pool not in VOCAB_POOLS:
+            raise ValueError(f"data.vocab_pool must be one of {VOCAB_POOLS}, got {self.vocab_pool!r}")
+        if self.max_input_size < 0:
+            raise ValueError(f"data.max_input_size must be >= 0, got {self.max_input_size}")
 
 
 @dataclass

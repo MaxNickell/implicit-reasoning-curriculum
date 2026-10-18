@@ -79,11 +79,14 @@ class CurriculumCallback(TrainerCallback):
         flops_per_token: int = 0,
         flops_per_head_row: Optional[int] = None,
         head: str = "sparse",
+        # Compute budget in PFLOPs, checked in on_save (every save_steps); 0 = none
+        max_total_pflops: float = 0.0,
     ):
         self.dataset = dataset
         self.flops_per_token = flops_per_token
         self.flops_per_head_row = flops_per_head_row
         self.head = head
+        self.max_total_pflops = max_total_pflops
         self.max_lookahead = max_lookahead
         self.base_lookahead = base_lookahead
         self.lookahead_step = lookahead_step
@@ -421,6 +424,7 @@ class CurriculumCallback(TrainerCallback):
                         alpha=stage_alpha,
                         tokenizer=self.tokenizer,
                         seed=(self.seed or 0) + global_step,
+                        vocab_pool=self.dataset.vocab_pool,
                     )
                 barrier()
                 stage_eval_inputs = broadcast_object(stage_eval_inputs, src=0)
@@ -497,6 +501,16 @@ class CurriculumCallback(TrainerCallback):
                 except Exception as e:
                     rank_print(f"[LOSS][WARN] JSONL flush on save failed: {e}")
 
+        # Compute budget: cumulative 6N x tokens against training.max_total_pflops, checked here so that the
+        # stop coincides with a full Trainer checkpoint (a resume with a larger budget then continues cleanly
+        # without losing the last save_steps worth of training).
+        if self.max_total_pflops > 0 and self.flops_per_token:
+            cum_pflops = self._cumulative_tokens * self.flops_per_token / 1e15
+            if cum_pflops >= self.max_total_pflops:
+                rank_print(f"[PFLOPS] Reached {cum_pflops:.0f} PFLOPS ≥ max {self.max_total_pflops:.0f} — stopping training")
+                control.should_save = True
+                control.should_training_stop = True
+                self.finished = True
 
         # Persistent checkpoint
         if (self.persist_every > 0

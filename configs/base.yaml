@@ -18,14 +18,18 @@ training:
   accuracy_window: 800
   head: sparse                 # sparse | full
   ddp_grad_average: false      # false = the paper's setting (no cross-rank gradient averaging)
+  max_total_pflops: 0          # compute budget in PFLOPs (6N x tokens), checked every save_steps; 0 = none
 
 curriculum:
   accuracy_threshold: 0.98
   min_steps_per_stage: 200
   check_every: 50
+  breadth: 2                   # edge budget per unit lookahead; 2 = goal path + one distractor (the paper)
+  shuffled_mixture: null       # exposure-matched shuffled control, 'L:steps,...' from a curriculum run; null = off
 
 data:
-  fixed_vocab: false
+  vocab_pool: none             # none | grow | fixed (fixed ID -> attribute-name dictionary; none = the paper's main runs)
+  max_input_size: 0            # generator context n; 0 = 6 x curriculum.max_lookahead
   instruction_mix_ratio: 0.0
 
 eval:

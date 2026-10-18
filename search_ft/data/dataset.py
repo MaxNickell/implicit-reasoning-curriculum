@@ -1,6 +1,6 @@
 import multiprocessing
 import random
-from typing import Dict, List, Any, Optional, Set
+from typing import Dict, List, Any, Optional, Set, Tuple
 
 import torch
 from torch.utils.data import Dataset
@@ -35,7 +35,9 @@ class PackedSequenceDataset(Dataset):
         seed: Optional[int] = None,
         resume_step: int = 0,
         epoch_size: int = 10_000_000,
-        fixed_vocab: bool = False,
+        vocab_pool: str = "none",
+        breadth: int = 2,
+        shuffled_mixture: Optional[List[Tuple[int, int]]] = None,
         instruction_mix_ratio: float = 0.0,
     ):
         # No flash-attn check here: the model load with attn_implementation=flash_attention_{2,3}
@@ -51,7 +53,16 @@ class PackedSequenceDataset(Dataset):
         self.seed = seed
         self.resume_step = resume_step
         self.epoch_size = epoch_size
-        self.fixed_vocab = fixed_vocab
+        self.vocab_pool = vocab_pool
+        self.breadth = breadth
+        # Exposure-matched shuffled control: each search example draws its lookahead L independently from the
+        # curriculum's realized stage mix, weighted by the number of steps the curriculum spent at each L (every
+        # step is the same number of examples). Drawn from the per-batch-reseeded worker RNG, so data stays
+        # deterministic by batch index. None = off.
+        self.shuffled_mixture = shuffled_mixture
+        if shuffled_mixture:
+            self._mix_L = [int(L) for L, _ in shuffled_mixture]
+            self._mix_w = [int(w) for _, w in shuffled_mixture]
         self.instruction_mix_ratio = instruction_mix_ratio
         self.use_chat_template = instruction_mix_ratio > 0
 
@@ -65,7 +76,10 @@ class PackedSequenceDataset(Dataset):
         self._instruction_iterator = None
 
         rank_print(f"[DATASET] Packed Map-style | batch_size={batch_size} | "
-                   f"instruction_mix={instruction_mix_ratio:.0%}")
+                   f"instruction_mix={instruction_mix_ratio:.0%} | vocab_pool={vocab_pool} | breadth={breadth}")
+        if shuffled_mixture:
+            rank_print(f"[DATASET] Shuffled mixture (L:weight): "
+                       + ",".join(f"{L}:{w}" for L, w in zip(self._mix_L, self._mix_w)))
 
     @property
     def stage(self):
@@ -84,7 +98,7 @@ class PackedSequenceDataset(Dataset):
 
     def _stage_alpha(self) -> float:
         target_L = self._stage_target_lookahead()
-        return alpha_for_lookahead(target_L, self.max_input_size)
+        return alpha_for_lookahead(target_L, self.max_input_size, breadth=self.breadth)
 
     def _is_final_stage(self) -> bool:
         return self._stage_target_lookahead() >= self.max_lookahead
@@ -136,7 +150,11 @@ class PackedSequenceDataset(Dataset):
 
     def _generate_one_search_sample(self, rng: random.Random) -> Optional[Dict[str, Any]]:
         gen = self._worker_generator
-        alpha = self._stage_alpha()
+        if self.shuffled_mixture:
+            L_mix = rng.choices(self._mix_L, weights=self._mix_w)[0]
+            alpha = alpha_for_lookahead(L_mix, self.max_input_size, breadth=self.breadth)
+        else:
+            alpha = self._stage_alpha()
 
         ex = None
         for _ in range(100):
@@ -145,7 +163,7 @@ class PackedSequenceDataset(Dataset):
                 reserved_inputs=self.reserved_inputs,
                 alpha=alpha,
                 max_lookahead=self.max_lookahead,
-                fixed_vocab=self.fixed_vocab,
+                vocab_pool=self.vocab_pool,
             )
             if batch and batch[0] and batch[0].output_texts:
                 candidate = batch[0]

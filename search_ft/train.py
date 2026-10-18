@@ -15,6 +15,7 @@ from .data.dataset import PackedSequenceDataset
 from .data.heldout import load_heldout, eval_data_fingerprint
 from .trainer.packed_trainer import PackedSequenceTrainer
 from .curriculum.callback import CurriculumCallback, estimate_flops_per_token, estimate_head_params
+from .curriculum.lookahead import parse_lookahead_mixture
 from .checkpoint.resume import prepare_resume, apply_resume_to_callback, apply_resume_to_trainer
 from .evaluation.inline import run_eval
 
@@ -59,8 +60,10 @@ def main():
 
     config = load_config()
 
-    # Derived values
-    max_input_size = 6 * config.curriculum.max_lookahead
+    # Derived values. The generator's context size n is 6 x max_lookahead (the paper's setting at breadth 2)
+    # unless data.max_input_size overrides it, e.g. for a breadth > 2 run that is to reach max_lookahead.
+    max_input_size = config.data.max_input_size or 6 * config.curriculum.max_lookahead
+    shuffled_mixture = parse_lookahead_mixture(config.curriculum.shuffled_mixture)
 
     # Output directory: {base_dir}/runs/{name}/
     if not config.experiment.name:
@@ -127,7 +130,8 @@ def main():
         )
 
     rank_print(f"[DATA] Loading heldout eval set from {heldout_path}...")
-    heldout_examples, reserved_inputs = load_heldout(heldout_path)
+    heldout_examples, reserved_inputs = load_heldout(
+        heldout_path, expect_max_input_size=max_input_size, expect_vocab_pool=config.data.vocab_pool)
     eval_inputs = [ex["input_text"] for ex in heldout_examples]
     eval_labels = [ex["output_texts"] for ex in heldout_examples]
     eval_fp = eval_data_fingerprint(eval_inputs, eval_labels)
@@ -149,7 +153,9 @@ def main():
         reserved_inputs=reserved_inputs,
         seed=config.experiment.seed,
         resume_step=resume_step,
-        fixed_vocab=config.data.fixed_vocab,
+        vocab_pool=config.data.vocab_pool,
+        breadth=config.curriculum.breadth,
+        shuffled_mixture=shuffled_mixture,
         instruction_mix_ratio=config.data.instruction_mix_ratio,
     )
 
@@ -200,7 +206,10 @@ def main():
         flops_per_token=flops_per_token,
         flops_per_head_row=flops_per_head_row,
         head=config.training.head,
+        max_total_pflops=config.training.max_total_pflops,
     )
+    if config.training.max_total_pflops > 0:
+        rank_print(f"[PFLOPS] Will stop training at {config.training.max_total_pflops} PFLOPS")
 
     # --- Trainer ---
     trainer = PackedSequenceTrainer(

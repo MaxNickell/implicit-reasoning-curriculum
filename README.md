@@ -67,6 +67,20 @@ torchrun ... --config configs/example.yaml --curriculum.lookahead_step=1 --data.
 
 All parameters are defined in `search_ft/config.py`.
 
+### Ablations
+
+Four fields reproduce the paper's ablations; each defaults to the main runs' setting.
+
+`data.vocab_pool` (`none` | `grow` | `fixed`) sets how the symbolic vertex IDs are named. `none`, the main runs, draws fresh random attribute names for every instance. `grow` and `fixed` render every vertex ID through one fixed ID-to-name dictionary (the same list in every worker and rank), so the active vocabulary is exactly the ID range the generator draws from. Under `grow` that range follows the stage (`breadth*L+2` names at stage L, so 2(L+1) at breadth 2; ID 0 is reserved); under `fixed` it is pinned at the context maximum (`(n-5)//3+1` names, 255 at n=768) from the first stage on. The held-out set has to be generated with the same `--vocab_pool`, so that it is named the way the training data is; `search_ft.train` refuses a held-out file whose `vocab_pool` differs from the run's.
+
+`curriculum.breadth` (default 2) is the edge budget per unit lookahead from which the stage alpha is derived, alpha(L) = (breadth*L+1)/((n-4)//3). Breadth 2 is one goal path plus one equal-length distractor at the maximum depth; 3 or 4 widen the deepest instances to that many branches and scale the vertex-ID pool with them. The reachable L for a context n is ((n-5)//3-1)//breadth, so a breadth above 2 needs `data.max_input_size` above the default 6 x `max_lookahead` (the paper's breadth runs used n=3080 for L=256) and a held-out set generated with the same `--max_input_size`.
+
+`curriculum.shuffled_mixture` is the exposure-matched shuffled control. It takes the per-stage step counts of a curriculum run as `'L:steps,L:steps,...'` (a YAML list of `[L, steps]` pairs is also accepted). Every search example then draws its lookahead from that mixture, weighted by the step counts, from the per-batch-reseeded worker RNG, so the run sees the curriculum's multiset of examples in random order. Combine it with a `curriculum.accuracy_threshold` above 1, so that the stage never advances, and a `training.max_steps` equal to the curriculum's step count.
+
+`training.max_total_pflops` (default 0, off) stops training once the cumulative compute, 6N x tokens as reported in `loss_history.jsonl`, has reached the budget. It is checked when the Trainer saves a checkpoint (every `training.save_steps`), so the stop coincides with a full checkpoint and a resume with a larger budget continues from it; the cumulative token count is restored from `loss_history.jsonl` on resume.
+
+`configs/vocabpool_grow.yaml`, `configs/vocabpool_fixed.yaml`, `configs/breadth4.yaml` and `configs/shuffled_matched.yaml` hold the paper's settings for these arms.
+
 ## Training semantics
 
 **Data parallelism.** Each GPU rank trains its own replica of the model. One optimizer step on a rank consumes `training.per_device_batch_size` x `gradient_accumulation_steps` packed sequences, and gradients are not averaged across ranks: the training forward calls the transformer body directly, which bypasses `DistributedDataParallel`, so the replicas drift apart between checkpoint reloads. The checkpoint that is saved, evaluated and resumed from is rank 0's replica. `training.effective_batch_size` counts the sequences consumed per optimizer step across all ranks (`per_device_batch_size` x `gradient_accumulation_steps` x `world_size`); gradient accumulation is derived from it so that this count does not depend on the GPU count. The curriculum gate uses the rolling full-word accuracy over the last `training.accuracy_window` sequences, all-gathered across ranks and averaged, so every rank advances at the same step. Compute is counted for all ranks. Setting `training.ddp_grad_average: true` all-reduces (averages) every trainable gradient across ranks at the end of each accumulation window, which is standard data-parallel training; this is not what the paper's runs used.

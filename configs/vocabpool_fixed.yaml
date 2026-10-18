@@ -1,0 +1,32 @@
+_base_: base.yaml
+
+# Entity-vocabulary ablation, arm "fixed": the vertex-ID -> name dictionary with the ID range pinned at the
+# context maximum ((n-5)//3+1 = 255 names at n = 768) from the first stage on. Otherwise identical to
+# vocabpool_grow.yaml (the paper's s=8 run and its 87,483 PFLOPs budget).
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 128 --samples 500 --vocab_pool fixed
+
+experiment:
+  name: qwen06b_vocabpool_fixed
+
+model:
+  name: "Qwen/Qwen3-0.6B"
+
+training:
+  effective_batch_size: 768
+  per_device_batch_size: 48
+  save_steps: 250
+  accuracy_window: 800
+  max_total_pflops: 87483
+
+curriculum:
+  base_lookahead: 8
+  max_lookahead: 128
+  lookahead_step: 8
+  min_steps_per_stage: 200
+  check_every: 25
+
+data:
+  vocab_pool: fixed
+
+eval:
+  persist_every: 1000

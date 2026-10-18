@@ -15,6 +15,7 @@ def build_heldout_set(
     seed: int = 12345,
     reserved_inputs: Optional[Set[str]] = None,
     max_attempts_per_example: int = 2000,
+    vocab_pool: str = "none",
 ) -> Tuple[List[Dict[str, Any]], Set[str]]:
     avoid = reserved_inputs or set()
 
@@ -37,6 +38,7 @@ def build_heldout_set(
                 reserved_inputs=avoid,
                 alpha=alpha,
                 max_lookahead=max_lookahead,
+                vocab_pool=vocab_pool,
             )
 
             if not batch or not batch[0] or not batch[0].output_texts:
@@ -79,6 +81,7 @@ def generate_eval_at_alpha(
     tokenizer,
     reserved_inputs: Optional[Set[str]] = None,
     seed: Optional[int] = None,
+    vocab_pool: str = "none",
 ) -> Tuple[List[str], List[List[str]]]:
     reserved = reserved_inputs or set()
     g = NaturalLanguageGraphGenerator(max_input_size, seed=seed)
@@ -96,6 +99,7 @@ def generate_eval_at_alpha(
             reserved_inputs=reserved,
             alpha=alpha,
             max_lookahead=max_lookahead,
+            vocab_pool=vocab_pool,
         )
         if not (batch and batch[0] and batch[0].output_texts):
             continue
@@ -132,6 +136,7 @@ def save_heldout(
     max_lookahead: int,
     max_input_size: int,
     seed: int,
+    vocab_pool: str = "none",
 ) -> None:
     data = {
         "meta": {
@@ -139,6 +144,7 @@ def save_heldout(
             "max_input_size": max_input_size,
             "seed": seed,
             "samples": len(examples),
+            "vocab_pool": vocab_pool,
         },
         "examples": examples,
     }
@@ -148,7 +154,15 @@ def save_heldout(
         json.dump(data, f, indent=2)
 
 
-def load_heldout(path: str) -> Tuple[List[Dict[str, Any]], Set[str]]:
+def load_heldout(
+    path: str,
+    *,
+    expect_max_input_size: Optional[int] = None,
+    expect_vocab_pool: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], Set[str]]:
+    """Load a held-out file. The file is named by max_lookahead only, so a training run passes the context size
+    and vocab_pool it was generated with and a mismatch is an error (a held-out set at the wrong context or with
+    the wrong naming would silently score a different task)."""
     with open(path) as f:
         data = json.load(f)
 
@@ -157,7 +171,14 @@ def load_heldout(path: str) -> Tuple[List[Dict[str, Any]], Set[str]]:
 
     meta = data.get("meta", {})
     print(f"  [heldout] Loaded {len(examples)} examples from {path}")
-    print(f"  [heldout] max_lookahead={meta.get('max_lookahead')}, "
-          f"seed={meta.get('seed')}")
+    print(f"  [heldout] max_lookahead={meta.get('max_lookahead')}, max_input_size={meta.get('max_input_size')}, "
+          f"vocab_pool={meta.get('vocab_pool', 'none')}, seed={meta.get('seed')}")
+
+    if expect_max_input_size is not None and meta.get("max_input_size") not in (None, expect_max_input_size):
+        raise ValueError(f"{path} was generated at max_input_size={meta.get('max_input_size')}, the run uses "
+                         f"{expect_max_input_size}; regenerate it with --max_input_size {expect_max_input_size}")
+    if expect_vocab_pool is not None and meta.get("vocab_pool", "none") != expect_vocab_pool:
+        raise ValueError(f"{path} was generated with vocab_pool={meta.get('vocab_pool', 'none')}, the run uses "
+                         f"{expect_vocab_pool}; regenerate it with --vocab_pool {expect_vocab_pool}")
 
     return examples, reserved

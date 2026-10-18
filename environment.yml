@@ -13,9 +13,12 @@ dependencies:
   - pyyaml>=6.0
   - pip
   - pip:
-    - transformers>=4.55
+    - transformers>=4.57   # packed forward written against 4.57.5 (FlashAttentionKwargs cu_seq_lens_q/k, max_length_q/k)
     - accelerate>=1.10
-    - flash-attn>=2.8
+    - flash-attn>=2.8      # FlashAttention-2 (model.attn_kernel: fa2, and auto on non-Hopper GPUs)
+    # Optional, Hopper (H100/H200) only: FlashAttention-3, the `flash_attn_3` package built from the
+    # flash-attention repo's hopper/ directory (model.attn_kernel: fa3, and auto on sm90):
+    #   git clone https://github.com/Dao-AILab/flash-attention && cd flash-attention/hopper && python setup.py install
     - datasets>=3.0
     - faker>=40.0
-    - liger-kernel>=0.2
+    - liger-kernel-nightly

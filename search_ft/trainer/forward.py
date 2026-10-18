@@ -1,132 +1,141 @@
+"""Training forward on one packed micro-batch.
+
+The micro-batch is one flat sequence [1, T] with per-sequence position_ids restarting at 0 and the
+sequence boundaries as int32 cu_seq_lens (data/collate.py). hf_forward_body runs the transformer BODY
+only (Qwen3Model / GPTNeoXModel after stripping the DDP wrapper) through transformers' built-in packed
+flash-attention path, passing attention_mask=None, use_cache=False and explicit cu_seq_lens_q/k plus
+python-int max_length_q/k. The output head, the cross-entropy and the gate metrics are computed by the
+trainer (head_ce_and_preds, PackedSequenceTrainer.compute_loss).
+
+Two properties follow from calling the body directly and are kept on purpose: DistributedDataParallel's
+forward is bypassed, so gradients are NOT averaged across ranks unless training.ddp_grad_average is set,
+and no autocast is entered (the model runs in its native dtype, bf16 in training).
+"""
 import torch
-from flash_attn import flash_attn_varlen_func
+import torch.nn.functional as F
 
-from ..model.arch import ModelParts
-
-
-_apply_rope = None
-for _rope_module in [
-    'transformers.models.qwen3.modeling_qwen3',
-    'transformers.models.gpt_neox.modeling_gpt_neox',
-]:
-    try:
-        _mod = __import__(_rope_module, fromlist=['apply_rotary_pos_emb'])
-        _apply_rope = _mod.apply_rotary_pos_emb
-        break
-    except (ImportError, AttributeError):
-        continue
+from ..model.arch import ModelParts, set_layer_checkpointing
 
 
-def _rotate_half(x):
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2:]
-    return torch.cat((-x2, x1), dim=-1)
-
-
-def forward_layer_varlen(
-    layer,
-    hidden_states: torch.Tensor,
-    cu_seqlens: torch.Tensor,
-    max_seqlen: int,
+def hf_forward_body(
     parts: ModelParts,
-    cos: torch.Tensor,
-    sin: torch.Tensor,
+    input_ids: torch.Tensor,
+    position_ids: torch.Tensor,
+    cu_seq_lens: torch.Tensor,
+    max_length: int,
+    use_ckpt: bool,
+    ckpt_every: int,
+    check: bool = False,
 ) -> torch.Tensor:
-    seq_len = hidden_states.shape[0]
-    num_heads = parts.num_heads
-    num_kv_heads = parts.num_kv_heads
-    head_dim = parts.head_dim
-    arch = parts.arch
-    parallel_residual = parts.parallel_residual
-    rotary_ndims = parts.rotary_ndims
+    """Run the HF transformer body on one packed micro-batch; returns h [T, H] after the final norm.
 
-    residual = hidden_states
-    ln1_out = layer.input_layernorm(hidden_states)
+    With attention_mask=None transformers' flash-attention mask builder returns None and the varlen branch
+    runs with our cu_seq_lens; RoPE cos/sin come from the model's own rotary embedding module, and Liger's
+    module-level patches (RoPE, RMSNorm, SwiGLU) apply unchanged. Under SDPA/eager (CPU tests) the same
+    inputs yield a block-diagonal causal mask derived from the restarting position_ids, so the numbers
+    agree with a per-sequence forward.
 
-    # QKV projection
-    if arch == 'gpt_neox':
-        # GPT-NeoX uses interleaved QKV: [q1|k1|v1 | q2|k2|v2 | ...] per head
-        qkv = layer.attention.query_key_value(ln1_out)  # [seq, 3 * H]
-        qkv = qkv.view(seq_len, num_heads, 3 * head_dim)
-        q = qkv[..., :head_dim]              # [seq, num_heads, head_dim]
-        k = qkv[..., head_dim:2*head_dim]
-        v = qkv[..., 2*head_dim:]
-    else:
-        q = layer.self_attn.q_proj(ln1_out)
-        k = layer.self_attn.k_proj(ln1_out)
-        v = layer.self_attn.v_proj(ln1_out)
-        # Reshape: [seq_len, num_heads, head_dim]
-        q = q.view(seq_len, num_heads, head_dim)
-        k = k.view(seq_len, num_kv_heads, head_dim)
-        v = v.view(seq_len, num_kv_heads, head_dim)
-
-    # QK Normalization (Qwen3 specific)
-    if arch == 'qwen':
-        if hasattr(layer.self_attn, 'q_norm') and layer.self_attn.q_norm is not None:
-            q = layer.self_attn.q_norm(q)
-            k = layer.self_attn.k_norm(k)
-
-    # Add batch dim and transpose for RoPE: [1, num_heads, seq_len, head_dim]
-    q = q.unsqueeze(0).transpose(1, 2)
-    k = k.unsqueeze(0).transpose(1, 2)
-
-    # Handle partial RoPE (e.g. Pythia rotary_pct=0.25)
-    partial_rope = rotary_ndims is not None and rotary_ndims < head_dim
-    if partial_rope:
-        q_rot, q_pass = q[..., :rotary_ndims], q[..., rotary_ndims:]
-        k_rot, k_pass = k[..., :rotary_ndims], k[..., rotary_ndims:]
-    else:
-        q_rot, k_rot = q, k
-
-    # Apply pre-computed RoPE cos/sin
-    if _apply_rope is not None:
-        q_rot, k_rot = _apply_rope(q_rot, k_rot, cos, sin)
-    else:
-        cos_u = cos.unsqueeze(1)
-        sin_u = sin.unsqueeze(1)
-        q_rot = (q_rot * cos_u) + (_rotate_half(q_rot) * sin_u)
-        k_rot = (k_rot * cos_u) + (_rotate_half(k_rot) * sin_u)
-
-    if partial_rope:
-        q = torch.cat((q_rot, q_pass), dim=-1)
-        k = torch.cat((k_rot, k_pass), dim=-1)
-    else:
-        q, k = q_rot, k_rot
-
-    # Reshape for flash_attn_varlen: [seq_len, num_heads, head_dim]
-    q = q.squeeze(0).transpose(0, 1).contiguous()
-    k = k.squeeze(0).transpose(0, 1).contiguous()
-    v = v.contiguous()
-
-    # Flash attention with per-sequence boundaries
-    attn_output = flash_attn_varlen_func(
-        q, k, v,
-        cu_seqlens_q=cu_seqlens,
-        cu_seqlens_k=cu_seqlens,
-        max_seqlen_q=max_seqlen,
-        max_seqlen_k=max_seqlen,
-        causal=True,
+    `check` enables one-time assertions on the collator contract (int32 cu_seq_lens on the model device,
+    python-int max_length), on autocast being off and on no KV cache being allocated."""
+    set_layer_checkpointing(parts.layers, use_ckpt, ckpt_every)
+    device = input_ids.device
+    # int32 on purpose: transformers annotates cu_seq_lens_* as LongTensor but flash_attn 2.8.x and
+    # flash_attn_3 take int32, and transformers' own position-ids path builds int32. Do not "fix" to int64.
+    if check:
+        assert cu_seq_lens.dtype == torch.int32 and cu_seq_lens.device == device and isinstance(max_length, int), \
+            (f"cu_seq_lens must be int32 on {device} with a python-int max_length, got "
+             f"{cu_seq_lens.dtype} {cu_seq_lens.device} {type(max_length)}")
+        assert not torch.is_autocast_enabled(), "autocast must stay off in the training forward"
+    cu = cu_seq_lens.to(device=device, dtype=torch.int32)
+    max_len = int(max_length)
+    out = parts.inner(
+        input_ids=input_ids,          # [1, T]
+        position_ids=position_ids,    # [1, T], restarts at 0 per sequence
+        attention_mask=None,
+        use_cache=False,
+        cu_seq_lens_q=cu, cu_seq_lens_k=cu,
+        max_length_q=max_len, max_length_k=max_len,
     )
+    if check:
+        assert getattr(out, "past_key_values", None) is None, "body allocated a KV cache despite use_cache=False"
+    return out.last_hidden_state[0]   # [T, H], after the final norm
 
-    # Output projection
-    attn_output = attn_output.reshape(seq_len, num_heads * head_dim)
-    if arch == 'gpt_neox':
-        attn_output = layer.attention.dense(attn_output)
+
+def head_ce_and_preds(lm_head, shift_h, shift_labels, valid_mask, mode: str = "sparse", chunk_size: int = 4096):
+    """Output head + per-row cross-entropy of one packed micro-batch.
+
+    shift_h [Tm1, H], shift_labels [Tm1] (-100 = unlabelled), valid_mask = shift_labels != -100. Returns
+    (ce [n_valid] in valid-row order, preds [Tm1] long, head_rows) where head_rows is how many rows went
+    through lm_head. ce is F.cross_entropy(reduction='none') on the lm_head output with no dtype conversion
+    here: in training (autocast off, bf16 model) the CE runs on bf16 logits in both modes.
+
+    mode='full': lm_head and argmax over EVERY row in chunk_size slices (the full [Tm1, V] logits would not
+    fit), CE at the valid rows of each slice; head_rows = Tm1.
+    mode='sparse': lm_head only at rows = valid_mask.nonzero() (one call when n_valid <= chunk_size,
+    otherwise chunk_size row pieces); preds is -1 at every unlabelled row and the argmax at labelled rows,
+    which is all the gate metrics ever read; head_rows = n_valid. With ~1% of the packed rows labelled
+    this skips about a quarter of all FLOPs per step at 156M head / 596M params.
+    The two modes differ only by GEMM rounding (different row counts per cuBLAS call)."""
+    Tm1 = shift_h.size(0)
+    device = shift_h.device
+    chunk_size = chunk_size or 4096
+    ce_parts = []
+    if mode == "full":
+        preds = torch.empty(Tm1, dtype=torch.long, device=device)
+        for cs in range(0, Tm1, chunk_size):
+            ce_end = min(cs + chunk_size, Tm1)
+            chunk_logits = lm_head(shift_h[cs:ce_end])  # [chunk, V]
+            preds[cs:ce_end] = chunk_logits.detach().argmax(dim=-1)
+            chunk_vm = valid_mask[cs:ce_end]
+            if chunk_vm.any():
+                ce_parts.append(F.cross_entropy(
+                    chunk_logits[chunk_vm],
+                    shift_labels[cs:ce_end][chunk_vm],
+                    reduction='none'
+                ))
+            del chunk_logits
+        head_rows = Tm1
+    elif mode == "sparse":
+        rows = valid_mask.nonzero(as_tuple=True)[0]  # long, ascending, on device
+        preds = torch.full((Tm1,), -1, dtype=torch.long, device=device)
+        for cs in range(0, rows.numel(), chunk_size):
+            rows_c = rows[cs:cs + chunk_size]
+            logits_v = lm_head(shift_h[rows_c])  # [n_valid_chunk, V]
+            preds[rows_c] = logits_v.detach().argmax(dim=-1)
+            ce_parts.append(F.cross_entropy(logits_v, shift_labels[rows_c], reduction='none'))
+            del logits_v
+        head_rows = int(rows.numel())
     else:
-        attn_output = layer.self_attn.o_proj(attn_output)
+        raise ValueError(f"head mode must be 'sparse' or 'full', got {mode!r}")
+    ce = torch.cat(ce_parts) if ce_parts else shift_h.new_zeros(0)
+    return ce, preds, head_rows
 
-    # Residual + MLP
-    if parallel_residual:
-        # GPT-NeoX (Pythia): x = x + attn(ln1(x)) + mlp(ln2(x))
-        ln2_out = layer.post_attention_layernorm(residual)
-        mlp_output = layer.mlp(ln2_out)
-        hidden_states = residual + attn_output + mlp_output
-    else:
-        # Qwen: x = x + attn(ln1(x)); x = x + mlp(ln2(x))
-        hidden_states = residual + attn_output
-        residual = hidden_states
-        hidden_states = layer.post_attention_layernorm(hidden_states)
-        hidden_states = layer.mlp(hidden_states)
-        hidden_states = residual + hidden_states
 
-    return hidden_states
+def blend_first_token_ce(ce, lm_head, shift_h, valid_mask, first_indices, first_valid, targets_by_seq, w: float):
+    """Soft first-token CE blend, in place on ce (the per-valid-row CE from head_ce_and_preds): for every
+    sequence si with first_valid[si], the CE at its first answer row first_indices[si] becomes
+    w * soft_ce + (1 - w) * ce, soft_ce = -mean log p over targets_by_seq[si] (skipped when that list is
+    empty). The first rows' logits come from a second lm_head call on exactly those rows, so the term is
+    identical under both head modes. Returns the number of rows that second call ran through lm_head
+    (0 when w <= 0, which is the paper's setting), for the head_rows accounting."""
+    if w <= 0 or not first_valid.any():
+        return 0
+    device = shift_h.device
+    ce_indices = torch.cumsum(valid_mask.int(), dim=0) - 1  # [Tm1]
+    valid_fi = first_indices[first_valid]
+    valid_ce = ce_indices[valid_fi]
+    fi_logits = lm_head(shift_h[valid_fi])  # [N_first, V]
+    batch_logp = F.log_softmax(fi_logits, dim=-1)
+    del fi_logits
+
+    ce_list = valid_ce.tolist()
+    valid_seq_indices = torch.nonzero(first_valid, as_tuple=True)[0].tolist()
+    for j, si in enumerate(valid_seq_indices):
+        vf = targets_by_seq[si]
+        if not vf:
+            continue
+        ids = torch.tensor(vf, device=device, dtype=torch.long)
+        soft_ce = -batch_logp[j, ids].mean()
+        ci = ce_list[j]
+        ce[ci] = w * soft_ce + (1.0 - w) * ce[ci]
+    return int(valid_fi.numel())

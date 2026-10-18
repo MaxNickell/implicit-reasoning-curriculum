@@ -22,11 +22,12 @@ def load_checkpoint_model(checkpoint_path: str):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    # SDPA, the transformers default: the same implementation every in-run evaluation uses (eval_attn_sdpa).
     model = AutoModelForCausalLM.from_pretrained(
         checkpoint_path,
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
-        attn_implementation="flash_attention_2",
+        attn_implementation="sdpa",
     )
     model.eval()
     model.cuda()

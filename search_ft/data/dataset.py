@@ -5,16 +5,11 @@ from typing import Dict, List, Any, Optional, Set
 import torch
 from torch.utils.data import Dataset
 
-try:
-    from flash_attn import flash_attn_varlen_func
-    FLASH_ATTN_AVAILABLE = True
-except ImportError:
-    FLASH_ATTN_AVAILABLE = False
-
 import generator as _gen_module
 
 from ..curriculum.lookahead import alpha_for_lookahead
 from ..distributed.utils import get_rank, rank_print
+from .collate import pack_batch
 from .nl_generator import NaturalLanguageGraphGenerator
 
 INSTRUCTION_DATASET = "allenai/Dolci-Instruct-SFT"
@@ -44,12 +39,8 @@ class PackedSequenceDataset(Dataset):
         fixed_vocab: bool = False,
         instruction_mix_ratio: float = 0.0,
     ):
-        if not FLASH_ATTN_AVAILABLE:
-            raise ImportError(
-                "flash-attn required for PackedSequenceDataset. "
-                "Install with: pip install flash-attn --no-build-isolation"
-            )
-
+        # No flash-attn check here: the model load with attn_implementation=flash_attention_{2,3}
+        # has already failed if neither flash_attn nor flash_attn_3 is importable.
         self.tokenizer = tokenizer
         self.target_samples_per_batch = batch_size
         self._stage = multiprocessing.Value('i', stage)
@@ -284,44 +275,8 @@ class PackedSequenceDataset(Dataset):
         return None
 
     def _pack_batch(self, samples: List[Dict]) -> Dict[str, Any]:
-        all_input_ids = []
-        all_labels = []
-        all_position_ids = []
-        cu_seqlens = [0]
-        max_seqlen = 0
-        all_sequence_info = []
-
-        offset = 0
-        for sample in samples:
-            seq_len = sample["seq_len"]
-
-            all_input_ids.extend(sample["input_ids"])
-            all_labels.extend(sample["labels"])
-            all_position_ids.extend(range(seq_len))
-
-            offset += seq_len
-            cu_seqlens.append(offset)
-
-            max_seqlen = max(max_seqlen, seq_len)
-
-            all_sequence_info.append({
-                "row_idx": 0,
-                "start_idx": cu_seqlens[-2],
-                "end_idx": cu_seqlens[-1],
-                "prompt_len": sample["prompt_len"],
-                "valid_first_targets": sample["valid_first_targets"],
-            })
-
-        return {
-            "input_ids": torch.tensor([all_input_ids], dtype=torch.long),
-            "labels": torch.tensor([all_labels], dtype=torch.long),
-            "position_ids": torch.tensor([all_position_ids], dtype=torch.long),
-            "cu_seqlens_list": [cu_seqlens],
-            "max_seqlen_list": [max_seqlen],
-            "sequence_info": all_sequence_info,
-            "num_sequences": len(samples),
-            "_efficiency": 100.0,
-        }
+        """One flat [1, T] micro-batch with per-sequence position_ids and int32 cu_seq_lens (collate.pack_batch)."""
+        return pack_batch(samples)
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         effective_idx = idx + self.resume_step

@@ -50,24 +50,56 @@ class ExperimentConfig:
     deterministic: bool = False
 
 
+ATTN_KERNELS = ("auto", "fa2", "fa3")
+HEAD_MODES = ("sparse", "full")
+
+
 @dataclass
 class ModelConfig:
     name: str = "Qwen/Qwen3-0.6B"
     dtype: str = "bfloat16"
+    # Flash-attention family used for training (transformers' packed varlen path). auto = FA3 on Hopper (sm90),
+    # FA2 elsewhere; fa2/fa3 force one. In-run evaluations always run under SDPA (see model/attention.py).
+    attn_kernel: str = "auto"
     gradient_checkpointing: bool = True
+    # Selective gradient checkpointing: recompute only every N-th decoder layer (1 = every layer) ...
+    ckpt_every_n_layers: int = 2
+    # ... unless a micro-batch exceeds this many tokens, in which case every layer is recomputed (0 = never relax).
+    # 88,000 was measured for Qwen3-0.6B at per_device_batch_size 48 on 80 GB GPUs; other models or batch sizes
+    # need their own measurement.
+    ckpt_relax_max_tokens: int = 88000
     reinit_weights: bool = False
     use_liger: bool = True
+
+    def __post_init__(self):
+        if self.attn_kernel not in ATTN_KERNELS:
+            raise ValueError(f"model.attn_kernel must be one of {ATTN_KERNELS}, got {self.attn_kernel!r}")
+        if self.ckpt_every_n_layers < 1:
+            raise ValueError(f"model.ckpt_every_n_layers must be >= 1, got {self.ckpt_every_n_layers}")
+        if self.ckpt_relax_max_tokens < 0:
+            raise ValueError(f"model.ckpt_relax_max_tokens must be >= 0, got {self.ckpt_relax_max_tokens}")
 
 
 @dataclass
 class TrainingConfig:
+    # Constant learning rate for the whole run (no warmup, no schedule).
     learning_rate: float = 5e-5
     effective_batch_size: int = 768
     per_device_batch_size: int = 192
-    warmup_steps: int = 100
     max_steps: int = 100_000_000
     save_steps: int = 500
-    accuracy_window: int = 1000
+    # Rolling window (sequences, total across ranks) for the curriculum's full-word accuracy gate.
+    accuracy_window: int = 800
+    # Output head: sparse = lm_head, argmax and cross-entropy on the labelled rows only; full = every packed row
+    # (identical loss up to GEMM rounding, see trainer/forward.py).
+    head: str = "sparse"
+    # False (the paper's setting): each rank trains its own replica, gradients are never averaged across ranks.
+    # True: all-reduce (AVG) every trainable gradient after backward, i.e. standard DistributedDataParallel.
+    ddp_grad_average: bool = False
+
+    def __post_init__(self):
+        if self.head not in HEAD_MODES:
+            raise ValueError(f"training.head must be one of {HEAD_MODES}, got {self.head!r}")
 
 
 @dataclass

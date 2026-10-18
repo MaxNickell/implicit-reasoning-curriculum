@@ -8,14 +8,30 @@ from transformers import GenerationConfig
 from ..distributed.utils import (
     get_rank, get_world_size, is_main_process, barrier, dist_is_initialized, rank_print
 )
+from ..model.attention import eval_attn_sdpa
 
 
 def _tokenize_leading_space(tokenizer, s: str) -> List[int]:
     return tokenizer(" " + s, add_special_tokens=False)["input_ids"]
 
 
-@torch.no_grad()
 def run_eval_greedy(
+    model,
+    tokenizer,
+    inputs: List[str],
+    labels: List[List[str]],
+    print_examples: int = 0,
+    use_chat_template: bool = False,
+) -> Dict[str, Any]:
+    """Greedy eval, run with SDPA (eval_attn_sdpa) whatever the training attention implementation is;
+    the training implementation is restored on exit."""
+    with eval_attn_sdpa(model):
+        return _run_eval_greedy_impl(model, tokenizer, inputs, labels,
+                                     print_examples=print_examples, use_chat_template=use_chat_template)
+
+
+@torch.no_grad()
+def _run_eval_greedy_impl(
     model,
     tokenizer,
     inputs: List[str],

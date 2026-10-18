@@ -4,16 +4,20 @@ experiment:
 
 model:
   dtype: bfloat16
+  attn_kernel: auto            # auto | fa2 | fa3 (auto = FA3 on Hopper, FA2 elsewhere)
   gradient_checkpointing: true
+  ckpt_every_n_layers: 2       # recompute every 2nd decoder layer ...
+  ckpt_relax_max_tokens: 88000 # ... unless a micro-batch exceeds this many tokens (then every layer)
   reinit_weights: false
   use_liger: true
 
 training:
-  learning_rate: 5.0e-5
+  learning_rate: 5.0e-5        # constant for the whole run, no warmup
   effective_batch_size: 768
-  warmup_steps: 100
   save_steps: 500
-  accuracy_window: 1000
+  accuracy_window: 800
+  head: sparse                 # sparse | full
+  ddp_grad_average: false      # false = the paper's setting (no cross-rank gradient averaging)
 
 curriculum:
   accuracy_threshold: 0.98

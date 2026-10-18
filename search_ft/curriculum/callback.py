@@ -15,6 +15,7 @@ from .lookahead import effective_search_L
 from .state import (
     save_curriculum_state, append_to_jsonl, atomic_write_json
 )
+from ..trainer.flops import executed_flops
 
 
 class CurriculumCallback(TrainerCallback):
@@ -42,8 +43,15 @@ class CurriculumCallback(TrainerCallback):
         # Checkpoint config
         persist_every: int = 2000,
         save_stage_checkpoints: bool = True,
+        # Compute accounting (trainer/flops.py): 6N per token; 6 N_head per head row (sparse head only)
+        flops_per_token: int = 0,
+        flops_per_head_row: Optional[int] = None,
+        head: str = "sparse",
     ):
         self.dataset = dataset
+        self.flops_per_token = flops_per_token
+        self.flops_per_head_row = flops_per_head_row
+        self.head = head
         self.max_lookahead = max_lookahead
         self.base_lookahead = base_lookahead
         self.lookahead_step = lookahead_step
@@ -132,26 +140,35 @@ class CurriculumCallback(TrainerCallback):
         if self.trainer is None or self.finished or state.global_step == 0:
             return control
 
-        # --- Track samples/tokens ---
-        if hasattr(self.trainer, '_step_samples'):
-            self.samples_this_stage += self.trainer._step_samples * get_world_size()
-        if hasattr(self.trainer, '_step_tokens'):
-            self.tokens_this_stage += self.trainer._step_tokens * get_world_size()
+        # --- Track samples/tokens for this optimizer step (all micro-batches, all ranks) ---
+        ws = get_world_size()
+        step_samples = getattr(self.trainer, '_step_samples', 0) * ws
+        step_tokens = getattr(self.trainer, '_step_tokens', 0) * ws
+        step_head_rows = getattr(self.trainer, '_step_head_rows', 0) * ws
+        self.samples_this_stage += step_samples
+        self.tokens_this_stage += step_tokens
         # Reset accumulators for next optimizer step
         self.trainer._step_samples = 0
         self.trainer._step_tokens = 0
+        self.trainer._step_head_rows = 0
 
         # --- Record loss history entry ---
         if self.trainer.recent_losses:
             current_loss = self.trainer.recent_losses[-1]
             effective_L = self.dataset._stage_target_lookahead()
-            tokens_this_step = self.trainer._last_batch_tokens * get_world_size()
+            tokens_this_step = step_tokens
             self._cumulative_tokens += tokens_this_step
 
             wall_time = self._current_wall_time()
             prev_wall = self.loss_history[-1]["wall_time"] if self.loss_history else 0.0
             dt = wall_time - prev_wall
             tokens_per_sec = tokens_this_step / dt if dt > 0 else 0.0
+            # Executed FLOPs of this optimizer step (sparse head: the lm_head ran on head_rows rows only)
+            # over its wall time; the cumulative PFLOPs stay 6N x tokens.
+            achieved_tflops = 0.0
+            if self.flops_per_token and dt > 0 and tokens_this_step > 0:
+                achieved_tflops = executed_flops(tokens_this_step, step_head_rows, self.flops_per_token,
+                                                 self.flops_per_head_row, self.head) / dt / 1e12
 
             lr = self.trainer.optimizer.param_groups[0]["lr"] if self.trainer.optimizer else 0.0
 
@@ -162,9 +179,14 @@ class CurriculumCallback(TrainerCallback):
                 "alpha": self.dataset._stage_alpha(),
                 "effective_L": effective_L,
                 "tokens": tokens_this_step,
+                "head_rows": step_head_rows,
+                "head": self.head,
                 "cumulative_tokens": self._cumulative_tokens,
+                "cumulative_pflops": self._cumulative_tokens * self.flops_per_token / 1e15,
                 "wall_time": wall_time,
                 "tokens_per_sec": round(tokens_per_sec),
+                "achieved_tflops": round(achieved_tflops, 2),
+                "n_gpus": ws,
                 "lr": lr,
                 "first_token_acc": self.trainer.get_first_token_acc(),
                 "full_word_acc": self.trainer.get_full_word_acc(),

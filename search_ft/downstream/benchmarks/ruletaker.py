@@ -1,40 +1,54 @@
+"""RuleTaker (Clark et al. 2020), the predecessor of ProofWriter: True / False entailment
+over rules and facts. 5-shot with balanced demos drawn from the pool (every question on a
+demo's theory is removed from scoring), log-likelihood over True / False.
+
+Data: HF tasksource/ruletaker, split test, the five BASE partitions only (depth-0, -1, -2,
+-3, -5). The depth-3ext and depth-3ext-NatLang configs are documented supersets of the base
+partitions (keeping them double-counts) and NatLang is the paper's separate transfer test.
+Strata are the partitions, i.e. the theory's MAXIMUM depth, not the per-question inference
+depth, which tasksource does not carry; a depth-N stratum contains questions of every
+depth <= N.
+"""
 from typing import Dict
 
-from ..registry import register
-from ..scoring import score_choices, subsample, distribute_n, fewshot_block_from_pool
+from ..registry import register, register_prepare
+from ..scoring import eval_strata, subsample, distribute_n, fewshot_block_from_pool, item_hash
 
 LABELS = ["True", "False"]
+K_SHOT = 5
 DEFAULT_N = 1000
+BASE_PARTITIONS = {"depth-0", "depth-1", "depth-2", "depth-3", "depth-5"}
 
 
-def _load_by_depth():
+def load_by_partition():
     from datasets import load_dataset
-
-    by_depth = {}
-    try:
-        ds = load_dataset("tasksource/ruletaker", split="test")
-    except Exception as e:
+    ds = None
+    for repo in ("tasksource/ruletaker", "hitachi-nlp/ruletaker"):
         try:
-            ds = load_dataset("hitachi-nlp/ruletaker", split="test")
-        except Exception as e2:
-            print(f"  [ruletaker] load failed: {e}; {e2}")
-            return None
-
+            ds = load_dataset(repo, split="test")
+            break
+        except Exception as e:
+            print(f"  [ruletaker] {repo} load failed: {e}")
+    if ds is None:
+        return None
     cfg_field = "config" if "config" in ds.column_names else None
+    by = {}
     for ex in ds:
-        d = ex.get(cfg_field, "depth-?") if cfg_field else "depth-?"
-        by_depth.setdefault(str(d), []).append(ex)
-    return by_depth
+        d = str(ex.get(cfg_field, "depth-?")) if cfg_field else "depth-?"
+        if cfg_field and d not in BASE_PARTITIONS:
+            continue
+        by.setdefault(d, []).append(ex)
+    return by
 
 
-def _format_prompt(ex) -> str:
+def fmt(ex) -> str:
     return (f"Rules and facts:\n{ex.get('context', '')}\n\n"
             f"Statement: {ex.get('question', '')}\n"
             f"Based only on the rules and facts above, is the statement true or false?\n"
             f"Answer:")
 
 
-def _extract_gold(ex) -> str:
+def gold_of(ex):
     lbl = str(ex.get("label", "")).strip().lower()
     if lbl in ("true", "entailment", "1"):
         return "True"
@@ -43,50 +57,31 @@ def _extract_gold(ex) -> str:
     return None
 
 
+def item_id(ex):
+    return item_hash(ex.get("config", ""), ex.get("context", ""), ex.get("question", ""))
+
+
+@register_prepare("ruletaker")
+def prepare(n=None) -> Dict:
+    n = DEFAULT_N if n is None else n
+    by = load_by_partition()
+    if by is None:
+        raise RuntimeError("RuleTaker load failed")
+    cfgs = sorted(by.keys())
+    all_pool = [ex for cfg in cfgs for ex in by[cfg]]
+    fs_block, demo_ids = fewshot_block_from_pool(all_pool, k=K_SHOT, prompt_fn=fmt, gold_fn=gold_of)
+    # exclude every question on a demo's THEORY, not just the demo item
+    demo_ctx = {ex.get("context", "") for ex in all_pool if id(ex) in demo_ids}
+    demo_ids = demo_ids | {id(ex) for ex in all_pool if ex.get("context", "") in demo_ctx}
+    pools = [[ex for ex in by[c] if id(ex) not in demo_ids] for c in cfgs]
+    caps = distribute_n(n, len(cfgs), [len(p) for p in pools])
+    strata = [(c, subsample(p, cap)) for c, p, cap in zip(cfgs, pools, caps)]
+    print(f"  [ruletaker] partitions {cfgs}, pool {[len(p) for p in pools]}, "
+          f"scored {[len(v) for _, v in strata]} ({K_SHOT}-shot, {len(demo_ctx)} demo theories excluded)")
+    return dict(strata=strata, labels=LABELS, fmt=fmt, gold_of=gold_of, item_id=item_id,
+                demos_block=fs_block, cf_prompt=fs_block + fmt({"context": "N/A", "question": "N/A"}))
+
+
 @register("ruletaker")
 def eval_ruletaker(model, tokenizer, use_chat: bool, n: int = None) -> Dict:
-    n = n if n is not None else DEFAULT_N
-
-    by_depth = _load_by_depth()
-    if by_depth is None:
-        return {"error": "RuleTaker load failed"}
-
-    cfgs = sorted(by_depth.keys())
-
-    # 5-shot demos from the pool
-    all_pool = [ex for cfg in cfgs for ex in by_depth[cfg]]
-    fs_block, demo_ids = fewshot_block_from_pool(
-        all_pool, k=5, prompt_fn=_format_prompt, gold_fn=_extract_gold)
-
-    sizes = [sum(1 for ex in by_depth[c] if id(ex) not in demo_ids) for c in cfgs]
-    caps = distribute_n(n, len(cfgs), sizes)
-
-    print(f"  [ruletaker] Loaded depths: {cfgs}, 5-shot demos built")
-
-    results = {}
-    for cfg, cap in zip(cfgs, caps):
-        pool = [ex for ex in by_depth[cfg] if id(ex) not in demo_ids]
-        correct = 0
-        total = 0
-
-        for ex in subsample(pool, cap):
-            gold = _extract_gold(ex)
-            if gold is None:
-                continue
-            prompt = fs_block + _format_prompt(ex)
-            out = score_choices(model, tokenizer, prompt, LABELS, use_chat)
-
-            if out["prediction"] == gold:
-                correct += 1
-            total += 1
-
-        acc = correct / total if total > 0 else 0.0
-        results[cfg] = {"accuracy": acc, "correct": correct, "total": total}
-        print(f"  [ruletaker] {cfg}: {correct}/{total} = {acc:.1%}")
-
-    total_correct = sum(r["correct"] for r in results.values())
-    total_count = sum(r["total"] for r in results.values())
-    results["overall"] = {"accuracy": total_correct / total_count if total_count > 0 else 0.0,
-                          "correct": total_correct, "total": total_count}
-    print(f"  [ruletaker] overall: {total_correct}/{total_count} = {results['overall']['accuracy']:.1%}")
-    return results
+    return eval_strata(model, tokenizer, use_chat, "ruletaker", **prepare(n))

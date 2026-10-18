@@ -49,13 +49,14 @@ python -m search_ft.eval --checkpoint $GSFT_RESULTS_DIR/runs/<name>/checkpoint-N
 ```bash
 python -m search_ft.downstream.runner \
     --checkpoint $GSFT_RESULTS_DIR/runs/<name>/checkpoint-N/ \
-    --benchmarks proofwriter folio logiqa ruletaker clutrr stepgame \
-                 prontoqa_ood multilogieval zebra_mc logicbench \
-                 nlgraph_gen proofwriter_cwa \
-    --n 1000
+    --benchmarks proofwriter proofwriter_cwa pararules zebra_mc prontoqa_deep \
+                 folio justlogic proverqa clutrr logicbench_bqa ruletaker \
+                 web_of_lies_deep logiqa nlgraph
 ```
 
 Benchmark datasets are downloaded automatically on first use.
+
+The fourteen benchmarks above are those of the paper's Table 4, each at the sample size and few-shot setting of that table when `--n` is omitted. The scoring flags default to the paper's final protocol (`--answer-cue assistant --label-variant auto --length-norm off`), `--items-output` writes the per-item outcomes that `python -m search_ft.downstream.mcnemar` pairs for the significance tests, and `python -m search_ft.downstream.prepare_data` fetches all data up front. See [docs/DOWNSTREAM.md](docs/DOWNSTREAM.md) for the benchmark table, the protocol, how to reproduce Table 4 and the known caveats.
 
 ## Configuration
 

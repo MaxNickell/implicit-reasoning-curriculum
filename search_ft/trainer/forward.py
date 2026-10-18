@@ -1,7 +1,7 @@
 """Training forward on one packed micro-batch.
 
 The micro-batch is one flat sequence [1, T] with per-sequence position_ids restarting at 0 and the
-sequence boundaries as int32 cu_seq_lens (data/collate.py). hf_forward_body runs the transformer BODY
+sequence boundaries as int32 cu_seq_lens (PackedSequenceDataset._pack_batch in data/dataset.py). hf_forward_body runs the transformer BODY
 only (Qwen3Model / GPTNeoXModel after stripping the DDP wrapper) through transformers' built-in packed
 flash-attention path, passing attention_mask=None, use_cache=False and explicit cu_seq_lens_q/k plus
 python-int max_length_q/k. The output head, the cross-entropy and the gate metrics are computed by the

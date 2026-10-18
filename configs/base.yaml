@@ -1,6 +1,6 @@
 experiment:
   seed: 1234
-  deterministic: false
+  deterministic: false         # true = bitwise-reproducible training on the same hardware and GPU count (~6-7% slower)
 
 model:
   dtype: bfloat16

@@ -95,7 +95,9 @@ Four fields reproduce the paper's ablations; each defaults to the main runs' set
 
 **Gradient checkpointing.** `model.ckpt_every_n_layers` recomputes only every N-th decoder layer in the backward pass; `model.ckpt_relax_max_tokens` falls back to every layer for micro-batches above that many tokens, since activation memory grows with the curriculum stage. Gradients are identical either way. The defaults (2 and 88,000) were measured for Qwen3-0.6B at `per_device_batch_size: 48` with 4 ranks on 80 GB GPUs and are not portable to other models or batch sizes without a measurement.
 
-The kernel, head mode, checkpointing settings and library versions of a run are written to `run_meta.json` in the run directory.
+**Reproducibility.** The data stream is a deterministic function of `experiment.seed`, the rank and the batch index, so two runs with the same configuration see the same examples in the same order. The kernels are not bitwise deterministic by default: the flash-attention backward is nondeterministic, so two such runs drift apart after the first steps (as do the replicas on different ranks). `experiment.deterministic: true` makes training bitwise reproducible on the same hardware and GPU count by selecting the deterministic flash-attention backward (`FLASH_ATTENTION_DETERMINISTIC=1`), deterministic cuBLAS reductions (`CUBLAS_WORKSPACE_CONFIG=:4096:8`), deterministic cuDNN and `torch.use_deterministic_algorithms`; it costs about 6-7% step time at L=128 on H100. The paper's runs did not use it.
+
+The kernel, head mode, checkpointing settings, determinism flags and library versions of a run are written to `run_meta.json` in the run directory.
 
 ## Output Structure
 

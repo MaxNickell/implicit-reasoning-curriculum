@@ -18,7 +18,7 @@ training:
   per_device_batch_size: 48
   max_steps: 22125
   save_steps: 500
-  accuracy_window: 200
+  accuracy_window: 800         # The archived control gated on W=200; the paper reports 800. The gate never fires here (threshold 1.01).
 
 curriculum:
   base_lookahead: 120

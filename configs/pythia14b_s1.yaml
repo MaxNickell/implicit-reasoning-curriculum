@@ -1,0 +1,34 @@
+_base_: base.yaml
+
+# Pythia-1.4B, s=1 curriculum to L=96 (Section 4.5, the Pythia family figure and Tables 12-15; the pretrained arm of
+# Section 4.6, Table 16). Batch 24 x 4 ranks x grad-accum 2 = 192, lr 2.7e-5, gate 98% after at least 200 steps
+# checked every 25, n = 6 x 96 = 576, held-out evaluation at every eighth L, no persistent checkpoints. Source:
+# nl/pythia14b_step1_L96_RESUME15232695_4g.sh; chain job_10579766 -> 10682439 -> 10730893 -> 11696279 -> 15232695
+# (nl/figure_src/plot_pretrained_vs_reinit_combined.py). The 5,000,000 PFLOPs budget is job_15232695's
+# (run_meta.json), where the paper's chain ends with L=75 completed; the resume script raised it to 9,000,000 for
+# an out-of-sample test of the fitted ceiling.
+# The archived run gated on W=1000; the paper reports 800.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 96 --samples 500
+
+experiment:
+  name: pythia14b_s1
+
+model:
+  name: "EleutherAI/pythia-1.4b"
+
+training:
+  learning_rate: 2.7e-5
+  effective_batch_size: 192
+  per_device_batch_size: 24
+  accuracy_window: 800
+  max_total_pflops: 5000000
+
+curriculum:
+  base_lookahead: 1
+  max_lookahead: 96
+  lookahead_step: 1
+  min_steps_per_stage: 200
+  check_every: 25
+
+eval:
+  persist_every: 0

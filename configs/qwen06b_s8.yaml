@@ -1,0 +1,30 @@
+_base_: base.yaml
+
+# The paper's reference curriculum (Section 4.2, Table 1 "with curriculum", Table 11 row s=8): Qwen3-0.6B, s=8 from
+# L=8 to L=256, gate 98% after at least 200 steps checked every 25, lr 5e-5, n = 6 x 256 = 1536. Source: the chain
+# job_8533255 -> 8555128 -> 9495391 -> jackie_qwen06b_L256_step8_20260427_100934 -> qwen06b_step8_L256_resumed
+# (run_meta.json of each segment; nl/tuning_job_qwen06b_curr256_step8_RESUME.sh is the L=256 extension). The first
+# three segments ran 48 x 4 ranks x grad-accum 4 = 768, the last two 96 x 2 x 4 and 96 x 4 x 2, the same 768. The
+# ceiling was raised 96 -> 128 -> 256 between segments; the graph at a given L does not depend on it, so one run to
+# 256 is the same curriculum. The 300,000 PFLOPs budget is the last segment's; the run completed L=256 at 282K.
+# The archived run gated on W=200 (W=1000 in its last segment); the paper reports 800.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 256 --samples 500
+
+experiment:
+  name: qwen06b_s8
+
+model:
+  name: "Qwen/Qwen3-0.6B"
+
+training:
+  effective_batch_size: 768
+  per_device_batch_size: 48
+  accuracy_window: 800
+  max_total_pflops: 300000
+
+curriculum:
+  base_lookahead: 8
+  max_lookahead: 256
+  lookahead_step: 8
+  min_steps_per_stage: 200
+  check_every: 25

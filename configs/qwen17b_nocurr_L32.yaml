@@ -1,0 +1,16 @@
+_base_: qwen17b_nocurr_base.yaml
+
+# Without curriculum at fixed L=32 for 86,298 PFLOPs, the curriculum arm's compute at its L=32 stage checkpoint
+# (Section 4.7, Tables 3 and 4). Source: nl/tuning_job_nocurr17b_L32_cm.sh; n = 192 = 6 x 32, the default.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 32 --samples 500
+
+experiment:
+  name: qwen17b_nocurr_L32
+
+training:
+  save_steps: 250
+  max_total_pflops: 86298
+
+curriculum:
+  base_lookahead: 32
+  max_lookahead: 32

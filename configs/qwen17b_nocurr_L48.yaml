@@ -1,0 +1,18 @@
+_base_: qwen17b_nocurr_base.yaml
+
+# Without curriculum at fixed L=48 for 127,463 PFLOPs, the curriculum arm's compute at its L=48 stage checkpoint
+# (Section 4.7, Tables 3 and 4). Source: nl/tuning_job_nocurr17b_L48_cm.sh (run_meta.json of job_nocurr17b_L48_cm);
+# n = 288 = 6 x 48, the default. The paper's checkpoint is the one at which this budget stopped the run (128.4K
+# PFLOPs); the script's later 170,000 (its lines 113-123) extended the run for a comparison by checkpoint selection.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 48 --samples 500
+
+experiment:
+  name: qwen17b_nocurr_L48
+
+training:
+  save_steps: 250
+  max_total_pflops: 127463
+
+curriculum:
+  base_lookahead: 48
+  max_lookahead: 48

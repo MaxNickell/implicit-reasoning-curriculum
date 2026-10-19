@@ -1,0 +1,13 @@
+_base_: stepsize_base.yaml
+
+# Step size s=8: stages L = 8, 16, ..., 512. The published s=8 curve (nl/plot_stepsize_sweep.py) is the reference
+# chain of qwen06b_s8.yaml, run at L=256 and n = 1536 with the same effective batch of 768.
+# The archived run gated on W=200 (W=1000 in its last segment); the paper reports 800.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 512 --samples 500 --max_input_size 3079
+
+experiment:
+  name: qwen06b_stepsize_s8
+
+curriculum:
+  base_lookahead: 8
+  lookahead_step: 8

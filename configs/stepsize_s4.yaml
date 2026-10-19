@@ -1,0 +1,13 @@
+_base_: stepsize_base.yaml
+
+# Step size s=4: stages L = 4, 8, ..., 512. The published s=4 curve (nl/plot_stepsize_sweep.py) is job_9281360, run
+# at L=256 and n = 1536 with the same 48 x 4 x 4 = 768 (run_meta.json).
+# The archived run gated on W=200; the paper reports 800.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 512 --samples 500 --max_input_size 3079
+
+experiment:
+  name: qwen06b_stepsize_s4
+
+curriculum:
+  base_lookahead: 4
+  lookahead_step: 4

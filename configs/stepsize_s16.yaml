@@ -1,0 +1,14 @@
+_base_: stepsize_base.yaml
+
+# Step size s=16: stages L = 16, 32, ..., 512. The published s=16 curve (nl/plot_stepsize_sweep.py) is
+# job_jackie_qwen06b_L256_step16_20260423_225615 -> _230739, run at L=256 and n = 1536 with batch 96 x 4 x 2 and
+# 96 x 2 x 4, the same 768 (run_meta.json); it completed L=256.
+# The archived run gated on W=200 (W=1000 in its second segment); the paper reports 800.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 512 --samples 500 --max_input_size 3079
+
+experiment:
+  name: qwen06b_stepsize_s16
+
+curriculum:
+  base_lookahead: 16
+  lookahead_step: 16

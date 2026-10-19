@@ -1,0 +1,14 @@
+_base_: stepsize_base.yaml
+
+# Step size s=64: stages L = 64, 128, ..., 512. Neither sweep script covers s=64; the published s=64 curve
+# (nl/plot_stepsize_sweep.py) is job_local_20260428_215710_qwen06b_step64_L256, run at L=256 and n = 1536 with the
+# same 48 x 4 x 4 = 768 under a 300,000 PFLOPs budget (run_meta.json); it ends with L=128 completed.
+# The archived run gated on W=1000; the paper reports 800.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 512 --samples 500 --max_input_size 3079
+
+experiment:
+  name: qwen06b_stepsize_s64
+
+curriculum:
+  base_lookahead: 64
+  lookahead_step: 64

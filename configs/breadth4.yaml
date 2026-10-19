@@ -1,9 +1,10 @@
 _base_: base.yaml
 
-# Breadth ablation: Qwen3-0.6B, s=8 to L = 256 at breadth 4, gate 98% on W = 1000, batch 48 x 4 ranks x
-# grad-accum 4 = 768. n = 3080 is the smallest context with (n-5)//3 >= 4*256+1, i.e. the smallest at which
-# breadth 4 can reach L = 256; the paper's breadth-3 run used the same n (set curriculum.breadth: 3). The budget
-# of 1,500,000 PFLOPs never ends a run before its gate does.
+# Breadth ablation (Appendix D.6, Table 17): Qwen3-0.6B, s=8 to L = 256 at breadth 4, gate 98%, batch 48 x 4 ranks
+# x grad-accum 4 = 768. n = 3080 is the smallest context with (n-5)//3 >= 4*256+1, i.e. the smallest at which
+# breadth 4 can reach L = 256; the paper's breadth-3 run used the same n (breadth3.yaml). The budget of 1,500,000
+# PFLOPs never ends a run before its gate does. Source: nl/tuning_job_qwen06b_s8_breadth_w1000.sh with B=4.
+# The archived run gated on W=1000; the paper reports 800.
 # Held-out set:  python -m search_ft.generate_heldout --max_lookahead 256 --samples 500 --max_input_size 3080
 
 experiment:
@@ -16,7 +17,7 @@ training:
   effective_batch_size: 768
   per_device_batch_size: 48
   save_steps: 500
-  accuracy_window: 1000
+  accuracy_window: 800
   max_total_pflops: 1500000
 
 curriculum:

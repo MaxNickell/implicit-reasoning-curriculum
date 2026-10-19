@@ -1,0 +1,32 @@
+_base_: base.yaml
+
+# Random initialization (Section 4.6, Table 16 row "Qwen3-0.6B random"): Qwen3-0.6B with every weight re-drawn at
+# the start, then the s=1 curriculum to L=256 at lr 3e-4 and batch 96 x 4 ranks x grad-accum 4 = 1536. Source:
+# nl/tuning_job_qwen06b_reinit_gau.sh and nl/qwen06b_REINIT_RESUME14110834_8g.sh (the 8-rank segments ran 96 x 8 x 2,
+# the same 1536); chain job_11427737 -> ... -> job_qwen06b_reinit_gau as listed in
+# nl/figure_src/plot_pretrained_vs_reinit_combined.py. Its pretrained counterpart is the Section 4.3 s=1 chain, see
+# stepsize_s1.yaml. No compute budget and no in-run held-out evaluation, as archived. The run ends with L=61 completed.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 256 --samples 500
+
+experiment:
+  name: qwen06b_s1_random_init
+
+model:
+  name: "Qwen/Qwen3-0.6B"
+  reinit_weights: true
+
+training:
+  learning_rate: 3.0e-4
+  effective_batch_size: 1536
+  per_device_batch_size: 96
+  accuracy_window: 800
+
+curriculum:
+  base_lookahead: 1
+  max_lookahead: 256
+  lookahead_step: 1
+  min_steps_per_stage: 200
+  check_every: 25
+
+eval:
+  stage_eval: false

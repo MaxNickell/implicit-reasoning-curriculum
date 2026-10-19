@@ -1,0 +1,15 @@
+_base_: qwen06b_curr48_thr99.yaml
+
+# The same Qwen3-0.6B Dolci-mixed curriculum at the 98% gate (Section 4.7; Table 9 row "Qwen3-0.6B curriculum, 6%
+# Dolci"). No launch script for it survives in nl/; every value is from the run directory
+# job_retrain_curr96_s1_dolci6 (run_meta.json: 48 x 4 x 4 = 768, lr 5e-5, threshold 0.98, min 200, check 25, W 200,
+# n 576, L 96, s=1, 6% Dolci-Instruct-SFT with chat template, 300,000 PFLOPs), i.e. qwen06b_curr48_thr99.yaml with
+# the threshold at base.yaml's 0.98, stated here for the pair.
+# The archived run gated on W=200; the paper reports 800.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 96 --samples 500
+
+experiment:
+  name: qwen06b_curr48_thr98
+
+curriculum:
+  accuracy_threshold: 0.98

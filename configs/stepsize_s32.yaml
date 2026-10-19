@@ -1,0 +1,14 @@
+_base_: stepsize_base.yaml
+
+# Step size s=32: stages L = 32, 64, ..., 512. The published s=32 curve (nl/plot_stepsize_sweep.py) is
+# job_local_20260429_163224_qwen06b_step32_L256 -> job_qwen06b_step32_L256_resumed, run at L=256 and n = 1536 with
+# batch 48 x 4 x 4 and 96 x 4 x 2, the same 768, under a 300,000 PFLOPs budget (run_meta.json).
+# The archived run gated on W=1000; the paper reports 800.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 512 --samples 500 --max_input_size 3079
+
+experiment:
+  name: qwen06b_stepsize_s32
+
+curriculum:
+  base_lookahead: 32
+  lookahead_step: 32

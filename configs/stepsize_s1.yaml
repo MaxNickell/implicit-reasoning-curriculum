@@ -1,0 +1,15 @@
+_base_: stepsize_base.yaml
+
+# Step size s=1: stages L = 1, 2, ..., 512. Table 11's s=1 row is the Section 4.3 chain job_10696449 -> 10730891 ->
+# 11426006 (96 x 4 ranks x grad-accum 2 = 768, n = 1536, L=256, W = 800, ends with L=244 completed at 1.50M PFLOPs),
+# which this arm reproduces up to L=256; the step-size figure's s=1 curve (nl/plot_stepsize_sweep.py) is the run it
+# was branched from, job_jackie_qwen06b_L256_step1_extend, same batch, gated on W=200.
+# The archived run gated on W=200 (W=800 after the branch); the paper reports 800.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 512 --samples 500 --max_input_size 3079
+
+experiment:
+  name: qwen06b_stepsize_s1
+
+curriculum:
+  base_lookahead: 1
+  lookahead_step: 1

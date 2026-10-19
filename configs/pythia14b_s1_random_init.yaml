@@ -1,0 +1,33 @@
+_base_: base.yaml
+
+# Random initialization (Section 4.6, Table 16 row "Pythia-1.4B random"): Pythia-1.4B with every weight re-drawn at
+# the start, then the s=1 curriculum to L=96 at lr 1e-4 and batch 192 x 4 ranks x grad-accum 1 = 768. Source:
+# nl/pythia14b_REINIT2_RESUME13654529_4g.sh; chain job_local_20260501_125955_pythia14b_step1_REINIT_lr1e4_eff768 ->
+# 11427690 -> ... -> 11650849 as listed in nl/figure_src/plot_pretrained_vs_reinit_combined.py (the 8-rank segment
+# ran 96 x 8 x 1, the same 768). No compute budget after the first segment, held-out evaluation at every eighth L,
+# no persistent checkpoints. The run ends with L=35 completed.
+# The archived run gated on W=1000; the paper reports 800.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 96 --samples 500
+
+experiment:
+  name: pythia14b_s1_random_init
+
+model:
+  name: "EleutherAI/pythia-1.4b"
+  reinit_weights: true
+
+training:
+  learning_rate: 1.0e-4
+  effective_batch_size: 768
+  per_device_batch_size: 192
+  accuracy_window: 800
+
+curriculum:
+  base_lookahead: 1
+  max_lookahead: 96
+  lookahead_step: 1
+  min_steps_per_stage: 200
+  check_every: 25
+
+eval:
+  persist_every: 0

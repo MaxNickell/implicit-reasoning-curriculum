@@ -1,0 +1,31 @@
+_base_: base.yaml
+
+# Pythia-410M, s=1 curriculum to L=96 (Section 4.5, the Pythia family figure and Tables 12-15): batch 48 x 4 ranks x
+# grad-accum 1 = 192, lr 5e-5, gate 98% after at least 200 steps checked every 25, n = 6 x 96 = 576, no compute
+# budget after the first segment (500,000 PFLOPs on job_10696605), no in-run held-out evaluation, no persistent
+# checkpoints. Source: nl/pythia410m_step1_L96_RESUME13930098_4g.sh; chain job_10696605 -> 10730890 -> 11114263 ->
+# 11426007 -> 12494239 -> 13930098 -> 14110833 (nl/figure_src/plot_fig8_family.py). The run ends with L=46 completed.
+# The archived run gated on W=1000; the paper reports 800.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 96 --samples 500
+
+experiment:
+  name: pythia410m_s1
+
+model:
+  name: "EleutherAI/pythia-410m"
+
+training:
+  effective_batch_size: 192
+  per_device_batch_size: 48
+  accuracy_window: 800
+
+curriculum:
+  base_lookahead: 1
+  max_lookahead: 96
+  lookahead_step: 1
+  min_steps_per_stage: 200
+  check_every: 25
+
+eval:
+  stage_eval: false
+  persist_every: 0

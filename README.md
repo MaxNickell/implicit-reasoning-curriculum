@@ -58,6 +58,8 @@ Benchmark datasets are downloaded automatically on first use.
 
 The fourteen benchmarks above are those of the paper's Table 4, each at the sample size and few-shot setting of that table when `--n` is omitted. The scoring flags default to the paper's final protocol (`--answer-cue assistant --label-variant auto --length-norm off`), `--items-output` writes the per-item outcomes that `python -m search_ft.downstream.mcnemar` pairs for the significance tests, and `python -m search_ft.downstream.prepare_data` fetches all data up front. See [docs/DOWNSTREAM.md](docs/DOWNSTREAM.md) for the benchmark table, the protocol, how to reproduce Table 4 and the known caveats.
 
+**Reproducing the paper's runs.** `configs/` holds one YAML per training arm of the paper: the s=8 reference curriculum, the step-size sweep, the Pythia family, the random-initialization arms, the Dolci-mixed Qwen3-0.6B and Qwen3-1.7B curricula with their fixed-L no-curriculum baselines, and the ablation controls. [configs/README.md](configs/README.md) maps each file to its paper element, model and settings, and each file's header names the launch script or run directory its values were taken from and the held-out set it needs. Every file states the gate window the paper reports (800) and notes where the archived run gated on another. Batch geometry is given as an effective batch, so a run on a different GPU count derives its gradient accumulation and consumes the same sequences per step.
+
 ## Configuration
 
 Configs use YAML with `_base_` inheritance. See `configs/example.yaml` for a complete example. Override any parameter via CLI:
@@ -79,7 +81,7 @@ Four fields reproduce the paper's ablations; each defaults to the main runs' set
 
 `training.max_total_pflops` (default 0, off) stops training once the cumulative compute, 6N x tokens as reported in `loss_history.jsonl`, has reached the budget. It is checked when the Trainer saves a checkpoint (every `training.save_steps`), so the stop coincides with a full checkpoint and a resume with a larger budget continues from it; the cumulative token count is restored from `loss_history.jsonl` on resume.
 
-`configs/vocabpool_grow.yaml`, `configs/vocabpool_fixed.yaml`, `configs/breadth4.yaml` and `configs/shuffled_matched.yaml` hold the paper's settings for these arms.
+`configs/vocabpool_grow.yaml`, `configs/vocabpool_fixed.yaml`, `configs/breadth3.yaml`, `configs/breadth4.yaml` and `configs/shuffled_matched.yaml` hold the paper's settings for these arms.
 
 ## Training semantics
 

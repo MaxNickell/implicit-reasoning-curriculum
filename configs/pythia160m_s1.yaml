@@ -1,0 +1,35 @@
+_base_: base.yaml
+
+# Pythia-160M, s=1 curriculum to L=96 (Section 4.5, the Pythia family figure and Tables 12-15): lr 1e-4, gate 98%
+# after at least 200 steps checked every 25, n = 6 x 96 = 576, 1,000,000 PFLOPs budget, no in-run held-out
+# evaluation, no persistent checkpoints. Source: nl/pythia160m_RESUME_4g_preempt.sh (256 x 4 ranks x grad-accum 2
+# = 2048) and nl/pythia160m_finish1M_smallgpu.sh (256 x 2 x 4, the same 2048); chain as listed in
+# nl/figure_src/plot_fig8_family.py. The chain's effective batch was not constant: 1024 x 2 x 1 = 2048 on its first
+# segment, 48 x 4 x 1 = 192 from job_12587988 to job_13606486, and 2048 again from job_13930099 on (run_meta.json of
+# each segment). The run ends with L=9 completed.
+# The archived run gated on W=1000; the paper reports 800.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 96 --samples 500
+
+experiment:
+  name: pythia160m_s1
+
+model:
+  name: "EleutherAI/pythia-160m"
+
+training:
+  learning_rate: 1.0e-4
+  effective_batch_size: 2048
+  per_device_batch_size: 256
+  accuracy_window: 800
+  max_total_pflops: 1000000
+
+curriculum:
+  base_lookahead: 1
+  max_lookahead: 96
+  lookahead_step: 1
+  min_steps_per_stage: 200
+  check_every: 25
+
+eval:
+  stage_eval: false
+  persist_every: 0

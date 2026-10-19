@@ -1,0 +1,32 @@
+_base_: base.yaml
+
+# Shared settings of the four without-curriculum arms of Section 4.7 (Tables 3 and 4, the no-curriculum column):
+# Qwen3-1.7B trained at one fixed L for the compute the curriculum arm had spent at its L stage checkpoint. Source:
+# nl/tuning_job_nocurr17b_L{8,16,32,48}_cm.sh (run dirs job_nocurr17b_L*_cm). Same training as the curriculum arm
+# (48 x 4 ranks x grad-accum 4 = 768, lr 5e-5, 6% of every batch from allenai/Dolci-Instruct-SFT under the chat
+# template, W = 800 as archived) with the gate disabled: accuracy_threshold 1.1 is never met, so the run stays in
+# its first stage until the compute budget stops it. The archived scripts passed --lookahead_step 0 --n_stages 1;
+# this code has no stage count and divides by lookahead_step when it prints the stage, so each arm's file states
+# the fixed stage as base_lookahead = max_lookahead = L, which makes stage 1 the final stage. Held-out evaluation
+# every 1000 steps; rolling checkpoints every 25-250 steps so that one lies close to any budget. Not a run by
+# itself: use qwen17b_nocurr_L8.yaml ... qwen17b_nocurr_L48.yaml.
+
+model:
+  name: "Qwen/Qwen3-1.7B"
+
+training:
+  effective_batch_size: 768
+  per_device_batch_size: 48
+  accuracy_window: 800
+
+curriculum:
+  accuracy_threshold: 1.1
+  min_steps_per_stage: 200
+  check_every: 25
+
+data:
+  instruction_mix_ratio: 0.06
+
+eval:
+  eval_every_steps: 1000
+  persist_every: 500

@@ -1,0 +1,36 @@
+_base_: base.yaml
+
+# Breadth ablation (Appendix D.6, Table 17): Qwen3-0.6B, s=8 to L = 256 at breadth 3, otherwise breadth4.yaml: gate
+# 98% after at least 200 steps checked every 25, batch 48 x 4 ranks x grad-accum 4 = 768, n = 3080 (the smallest
+# context at which breadth 4 can reach L = 256, shared by both arms so that they differ in breadth alone), and a
+# 1,500,000 PFLOPs budget that never ends a run before its gate does. Source:
+# nl/tuning_job_qwen06b_s8_breadth_w1000.sh with B=3 (run dir job_qwen06b_s8_b3_w1000).
+# The archived run gated on W=1000; the paper reports 800.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 256 --samples 500 --max_input_size 3080
+
+experiment:
+  name: qwen06b_s8_breadth3
+
+model:
+  name: "Qwen/Qwen3-0.6B"
+
+training:
+  effective_batch_size: 768
+  per_device_batch_size: 48
+  save_steps: 500
+  accuracy_window: 800
+  max_total_pflops: 1500000
+
+curriculum:
+  base_lookahead: 8
+  max_lookahead: 256
+  lookahead_step: 8
+  min_steps_per_stage: 200
+  check_every: 25
+  breadth: 3
+
+data:
+  max_input_size: 3080
+
+eval:
+  persist_every: 2000

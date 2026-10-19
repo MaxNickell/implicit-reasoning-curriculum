@@ -1,0 +1,38 @@
+_base_: base.yaml
+
+# Qwen3-1.7B curriculum of Section 4.7 (Tables 3 and 4, the curriculum column; Table 9 row "Qwen3-1.7B curriculum,
+# L <= 48"): s=1 with a 99% gate after at least 200 steps checked every 25, lr 5e-5, batch 48 x 4 ranks x grad-accum
+# 4 = 768, 6% of every batch drawn from allenai/Dolci-Instruct-SFT under the chat template, held-out evaluation at
+# every eighth L, 2,000,000 PFLOPs budget. Source: nl/tuning_job_17b_curr48_thr99.sh (run dir job_curr48_thr99).
+# The downstream tables use the stage checkpoint at L=48. The script's ceiling is L=128 at n = 780, the smallest n
+# whose generator ceiling reaches 128 (raised from 48 / 288 on 2026-09-21; the graphs at L <= 48 are unchanged);
+# set curriculum.max_lookahead: 48 to stop once L=48 is complete.
+# The archived run gated on W=200; the paper reports 800.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 128 --samples 500 --max_input_size 780
+
+experiment:
+  name: qwen17b_curr48
+
+model:
+  name: "Qwen/Qwen3-1.7B"
+
+training:
+  effective_batch_size: 768
+  per_device_batch_size: 48
+  accuracy_window: 800
+  max_total_pflops: 2000000
+
+curriculum:
+  base_lookahead: 1
+  max_lookahead: 128
+  lookahead_step: 1
+  accuracy_threshold: 0.99
+  min_steps_per_stage: 200
+  check_every: 25
+
+data:
+  max_input_size: 780
+  instruction_mix_ratio: 0.06
+
+eval:
+  persist_every: 500

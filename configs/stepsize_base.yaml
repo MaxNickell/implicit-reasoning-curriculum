@@ -1,0 +1,30 @@
+_base_: base.yaml
+
+# Shared settings of the step-size sweep (Section 4.4, Table 11, the step-size figure): Qwen3-0.6B with
+# base_lookahead = lookahead_step = s, gate 98% on W = 800 after at least 200 steps checked every 25, lr 5e-5, batch
+# 48 x 4 ranks x grad-accum 4 = 768, ceiling L=512 at n = 3079 (the smallest n whose generator ceiling reaches 512),
+# a common 1,500,000 PFLOPs budget so that only the gate ends an arm, no in-run held-out evaluation. Source:
+# nl/tuning_job_qwen06b_stepsize.sh (s = 1, 8, 16, 32; nl/tuning_job_qwen06b_stepsize_preempt.sh adds 2 and 4).
+# The archived script also passed n_stages = 512/s; here the stage count follows from (512 - s)/s + 1. Each arm's
+# file names the archived run behind the published curve, which ran at L=256 and n = 1536. Not a run by itself:
+# use stepsize_s1.yaml ... stepsize_s64.yaml.
+
+model:
+  name: "Qwen/Qwen3-0.6B"
+
+training:
+  effective_batch_size: 768
+  per_device_batch_size: 48
+  accuracy_window: 800
+  max_total_pflops: 1500000
+
+curriculum:
+  max_lookahead: 512
+  min_steps_per_stage: 200
+  check_every: 25
+
+data:
+  max_input_size: 3079
+
+eval:
+  stage_eval: false

@@ -1,0 +1,33 @@
+_base_: base.yaml
+
+# Pythia-2.8B, s=1 curriculum (Section 4.5, the Pythia family figure and Tables 12-15): batch 48 x 4 ranks x
+# grad-accum 8 = 1536, lr 2.7e-5, gate 98% checked every 25 steps with no minimum stage length, held-out evaluation
+# at every eighth L, no persistent checkpoints. Source: nl/pythia28b_step1_L256_RESUME11426089_bs48_PREEMPT_4g_7d.sh;
+# chain job_10580483 -> 10694584 -> 10730892 -> 11426089 -> 11647896 (nl/figure_src/plot_fig8_family.py). The chain
+# ran to L=96 at n = 576 (96 x 4 x 4, the same 1536) and was extended to L=256 at n = 1536 from 322K PFLOPs on; one
+# run to 256 trains the same graphs at every L. No compute budget after the first segment (500,000 PFLOPs on
+# job_10580483). The run ends with L=133 completed.
+# The archived run gated on W=1000; the paper reports 800.
+# Held-out set:  python -m search_ft.generate_heldout --max_lookahead 256 --samples 500
+
+experiment:
+  name: pythia28b_s1
+
+model:
+  name: "EleutherAI/pythia-2.8b"
+
+training:
+  learning_rate: 2.7e-5
+  effective_batch_size: 1536
+  per_device_batch_size: 48
+  accuracy_window: 800
+
+curriculum:
+  base_lookahead: 1
+  max_lookahead: 256
+  lookahead_step: 1
+  min_steps_per_stage: 0
+  check_every: 25
+
+eval:
+  persist_every: 0
